@@ -11,7 +11,6 @@ It implements:
 - a benchmark tool  
 - GitHub Actions CI pipeline  
 - secure memory wiping  
-- clean modular structure (`cipher.c` + `cipher.h`)
 
 > **Important:**  
 > This is **not a secure cryptographic algorithm** and must **not** be used to protect real data.  
@@ -53,7 +52,7 @@ It implements:
 
 ### Requirements
 - GCC
-- CMake ≥ 3.16  
+- CMake > 3.16  
 - GoogleTest (installed automatically in CI)
 
 ### Build & Run (one click)
