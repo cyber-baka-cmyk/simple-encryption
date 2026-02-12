@@ -9,13 +9,13 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 
-void generate_key(char *filename);
+void generate_key(const char *filename);
 
-void read_key(char* filename, unsigned char* key_buffer);
+void read_key(const char* filename, unsigned char* key_buffer);
 
-void encrypt_file(char* source_file, char* key_file, char* output_bin, char* output_txt);
+void encrypt_file(const char* source_file, const char* key_file, const char* output_bin, const char* output_txt);
 
-void decrypt_file(char* input_file, char* key_file, char* output_file);
+void decrypt_file(const char* input_file, const char* key_file, const char* output_file);
 
 void secure_memzero(void *ptr, size_t len);
 

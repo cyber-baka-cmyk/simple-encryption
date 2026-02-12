@@ -1,17 +1,32 @@
 #include "cipher.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include <fcntl.h>
 #include <string.h>
-#include <unistd.h>
 #include <arpa/inet.h>
 
-void generate_key(char* filename) {
-    uint32_t gen_key[4][4];
-    uint32_t counter;
+#ifdef _WIN32
+    #include <windows.h>
+    #define SECURE_ZERO(ptr, len) SecureZeroMemory(ptr, len)
+#else
+    static void secure_memzero_impl(void *ptr, size_t len) {
+        volatile unsigned char *p = (volatile unsigned char *)ptr;
+        while (len--) {
+            *p++ = 0;
+        }
+    }
+    #define SECURE_ZERO(ptr, len) secure_memzero_impl(ptr, len)
+#endif
 
-    counter = 0;
+void secure_memzero(void *ptr, size_t len) {
+    if (ptr != NULL && len > 0) {
+        SECURE_ZERO(ptr, len);
+    }
+}
+
+void generate_key(const char* filename) {
+    uint32_t gen_key[4][4];
+    uint32_t counter = 0;
+
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
             counter++;
@@ -22,102 +37,153 @@ void generate_key(char* filename) {
     shuffle(gen_key);
 
     FILE *fd = fopen(filename, "wb");
+    if (fd == NULL) {
+        fprintf(stderr, "Error: Cannot create key file '%s'\n", filename);
+        return;
+    }
 
     for (int i = 0; i < 4; i++) {
-            fwrite(gen_key[i], sizeof(uint32_t), 4, fd);
+        fwrite(gen_key[i], sizeof(uint32_t), 4, fd);
     }
     fclose(fd);
+
+    secure_memzero(gen_key, sizeof(gen_key));
 }
 
-void read_key(char* filename, unsigned char* key_buffer) {
+void read_key(const char* filename, unsigned char* key_buffer) {
     FILE *fd = fopen(filename, "rb");
+    if (fd == NULL) {
+        fprintf(stderr, "Error: Cannot open key file '%s'\n", filename);
+        return;
+    }
 
-    fseek(fd, 0, SEEK_END);
-    long file_size = ftell(fd);
-    fseek(fd, 0, SEEK_SET);
-
-    fread(key_buffer, 1, 64, fd);
+    size_t bytes_read = fread(key_buffer, 1, 64, fd);
     fclose(fd);
+
+    if (bytes_read != 64) {
+        fprintf(stderr, "Warning: Expected 64 bytes key, read %zu bytes\n", bytes_read);
+    }
 }
 
-void encrypt_file(char* source_file, char* key_file, char* output_bin, char* output_txt) {
+void encrypt_file(const char* source_file, const char* key_file, const char* output_bin, const char* output_txt) {
     unsigned char key[64];
-    unsigned char key_buffer[64];
+    unsigned char buffer[64];
 
     read_key(key_file, key);
 
     FILE *input_fd = fopen(source_file, "rb");
+    if (input_fd == NULL) {
+        fprintf(stderr, "Error: Cannot open source file '%s'\n", source_file);
+        return;
+    }
+
     FILE *out_bin = fopen(output_bin, "wb");
+    if (out_bin == NULL) {
+        fprintf(stderr, "Error: Cannot create output binary file '%s'\n", output_bin);
+        fclose(input_fd);
+        return;
+    }
+
     FILE *out_txt = fopen(output_txt, "w");
+    if (out_txt == NULL) {
+        fprintf(stderr, "Error: Cannot create output text file '%s'\n", output_txt);
+        fclose(input_fd);
+        fclose(out_bin);
+        return;
+    }
 
     size_t bytes_read;
-    int block_count = 0;
     size_t total_bytes = 0;
 
-    while ((bytes_read = fread(key_buffer, 1, 64, input_fd)) > 0) {
+    while ((bytes_read = fread(buffer, 1, 64, input_fd)) > 0) {
         total_bytes += bytes_read;
 
-        if (bytes_read < 64) memset(key_buffer + bytes_read, 0, 64 - bytes_read);
-
-        for (int i = 0; i < 64; i++) {
-            key_buffer[i] ^= key[i]; 
+        if (bytes_read < 64) {
+            memset(buffer + bytes_read, 0, 64 - bytes_read);
         }
 
-        fwrite(key_buffer, 1, 64, out_bin);
-        for (int i = 0; i < 64; i++) {
-            fprintf(out_txt, "%02X", key_buffer[i]);
+        for (size_t i = 0; i < 64; i++) {
+            buffer[i] ^= key[i];
+        }
+
+        fwrite(buffer, 1, 64, out_bin);
+
+        for (size_t i = 0; i < 64; i++) {
+            fprintf(out_txt, "%02X", buffer[i]);
             if ((i + 1) % 8 == 0 && i != 63) {
                 fprintf(out_txt, " ");
             }
         }
+        fprintf(out_txt, "\n");
     }
-    fprintf(out_txt, "\n");
 
     printf("Encryption completed successfully!\n");
-    
+    printf("Total bytes processed: %zu\n", total_bytes);
+
     fclose(input_fd);
     fclose(out_bin);
     fclose(out_txt);
+
+    secure_memzero(key, sizeof(key));
 }
 
-void decrypt_file(char* input_file, char* key_file, char* output_file) {
+void decrypt_file(const char* input_file, const char* key_file, const char* output_file) {
     unsigned char key[64];
     unsigned char buffer[64];
 
     read_key(key_file, key);
 
     FILE *input_fd = fopen(input_file, "rb");
+    if (input_fd == NULL) {
+        fprintf(stderr, "Error: Cannot open input file '%s'\n", input_file);
+        return;
+    }
+
     FILE *output_fd = fopen(output_file, "wb");
+    if (output_fd == NULL) {
+        fprintf(stderr, "Error: Cannot create output file '%s'\n", output_file);
+        fclose(input_fd);
+        return;
+    }
 
     size_t bytes_read;
+    size_t total_bytes = 0;
 
     while ((bytes_read = fread(buffer, 1, 64, input_fd)) > 0) {
-        for (int i = 0; i < 64; i++) {
-            buffer[i] ^= key[i]; 
+        for (size_t i = 0; i < bytes_read; i++) {
+            buffer[i] ^= key[i];
         }
 
         fwrite(buffer, 1, bytes_read, output_fd);
-    }  
+        total_bytes += bytes_read;
+    }
 
     printf("File decrypted successfully: %s\n", output_file);
+    printf("Total bytes processed: %zu\n", total_bytes);
 
     fclose(input_fd);
     fclose(output_fd);
+
+    secure_memzero(key, sizeof(key));
 }
 
 uint32_t generate_nonce(uint32_t *counter) {
-    uint8_t random_byte = 0;
+    uint32_t random_value = 0;
 
     FILE *fd = fopen("/dev/urandom", "rb");
     if (fd) {
-        fread(&random_byte, 1, 4, fd);
+        if (fread(&random_value, sizeof(uint32_t), 1, fd) != 1) {
+            random_value = (uint32_t)time(NULL);
+        }
         fclose(fd);
+    } else {
+        random_value = (uint32_t)time(NULL);
     }
 
     uint32_t gen_counter = htole32((*counter)++);
-    uint32_t nounce = ((uint32_t)random_byte << 24) ^ (gen_counter & 0x0000000F);
+    uint32_t nonce = random_value ^ (gen_counter & 0x0000000F);
 
-    return nounce;
+    return nonce;
 }
 
 void shuffle_round(uint32_t* a, uint32_t* b, uint32_t* c, uint32_t* d) {
@@ -140,9 +206,13 @@ void shuffle_round(uint32_t* a, uint32_t* b, uint32_t* c, uint32_t* d) {
 
 void shuffle(uint32_t arr[4][4]) {
     for (int t = 0; t < 20; t++) {
-        for (int i = 0; i < 4; i++) shuffle_round(&arr[0][i], &arr[1][i], &arr[2][i], &arr[3][i]);
+        for (int i = 0; i < 4; i++) {
+            shuffle_round(&arr[0][i], &arr[1][i], &arr[2][i], &arr[3][i]);
+        }
 
-        for (int i = 0; i < 4; i++) shuffle_round(&arr[i][0], &arr[i][1], &arr[i][2], &arr[i][3]);
+        for (int i = 0; i < 4; i++) {
+            shuffle_round(&arr[i][0], &arr[i][1], &arr[i][2], &arr[i][3]);
+        }
 
         shuffle_round(&arr[0][0], &arr[1][1], &arr[2][2], &arr[3][3]);
         shuffle_round(&arr[0][1], &arr[1][2], &arr[2][3], &arr[3][0]);
