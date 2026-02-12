@@ -10,7 +10,12 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 QUIET COMPONENTS Core Gui Widgets)
 if (NOT Qt6_FOUND)
-    find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets)
+    find_package(Qt5 QUIET COMPONENTS Core Gui Widgets)
+endif()
+if(Qt6_FOUND OR Qt5_FOUND)
+    message(STATUS "Qt found - GUI will be built")
+else()
+    message(WARNING "Qt not found. GUI will NOT be built. Only CLI and tests.")
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
